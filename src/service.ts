@@ -58,4 +58,8 @@ export async function registerService(service: Service) {
   service.add('query', (data) => {
     return rpc.callRepo('user', 'query', data);
   });
+
+  service.add('updateByUniqueKey', (data) => {
+    return rpc.callRepo('user', 'updateByUniqueKey', data);
+  });
 }
