@@ -1,4 +1,10 @@
-开发80%，实现主体功能
+记录BUG和修复手段,如果有时间重构
+
+1.较为致命,但几率极小，现行 `Migration` 模块，在创建阶段发生了 metadata 写入成功，表创建成功部分的情况。导致后续读取报错。
+》解决方案： upgrade.ts 中，将创建和metadata的写入放入事务。
+》 metadata设计于将orm元数据存储数据库，更新数据库时对比metadata和实际数据表进行更新。由于业务较大表多字段多，对性能要求高
+》 所以设计之初就规避了每一次访问时都扫描对比来初始化，仅更新时对比，一切以metadata为准。问题就在于metadata一旦出错代表不了实际情况
+》 后续如果重构需考虑
 
 > SqlView
 
@@ -28,6 +34,10 @@
 3. 分页查看表记录
 4. 部分类型的筛选
 5. Sql执行器
+
+> 我们的项目运行在 electron,web。其实还有一份Chrome插件版本的OpfsView，并且提供了SqlView和（monaco）编辑。但是基于最新的manifest V3开发，electron不适用，搁置了。https://github.com/wwog/StorageView/tree/main ,https://github.com/wwog/browserDisk 主要是后面的项目，前面的是实验一些功能。
+
+<img src="https://github.com/wwog/browserDisk/blob/main/assets/2.png"/>
 
 # Logger
 

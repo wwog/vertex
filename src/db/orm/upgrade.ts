@@ -42,13 +42,13 @@ export interface DiffTableMap {
   [key: string]: {
     type: 'add' | 'remove' | 'update';
     columns?:
-      | {
-          [key: string]: {
-            type: 'add' | 'remove' | 'update';
-            column: ColumnParams;
-          };
-        }
-      | undefined;
+    | {
+      [key: string]: {
+        type: 'add' | 'remove' | 'update';
+        column: ColumnParams;
+      };
+    }
+    | undefined;
   };
 }
 
@@ -77,7 +77,15 @@ export class Upgrade<T extends Table[]> {
       })
       .join('\n');
     this.logger.info('Create table SQL:', sql).print();
-    return this.orm.exec(sql);
+    try {
+      this.orm.exec("BEGIN TRANSACTION;" + "\n" + sql + "\n" + "COMMIT;");
+    } catch (error) {
+      console.error("Create table failed, rolled back.", error);
+      this.orm.exec("ROLLBACK;");
+      //同时删除 metadata表
+      this.orm.exec(`DROP TABLE IF EXISTS metadata;`);
+      throw error;
+    }
   }
 
   snapshotTable() {
