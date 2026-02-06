@@ -1,21 +1,16 @@
-import type {
-  ExecBaseOptions,
-  ExecReturnThisOptions,
-  ExecRowModeObjectOptions,
-  OpfsSAHPoolDatabase,
-  SAHPoolUtil,
-} from '@sqlite.org/sqlite-wasm';
-import type { Table } from './table';
-import { Logger } from '../../utils';
-import { Repository } from './repository';
-import { Upgrade } from './upgrade';
-import initSqlite3 from '@sqlite.org/sqlite-wasm';
-import { QueryBuilder } from './queryBuilder/query';
-import { ColumnInfer } from './table';
+import type { Table } from "./table";
+import { Repository } from "./repository";
+import { Upgrade } from "./upgrade";
+import { QueryBuilder } from "./queryBuilder/query";
+import type { ColumnInfer } from "./table";
+import type { DatabaseAdapter, LoggerAdapter } from "./adapter";
 
-export interface SqliteWasmORMOptions<T extends Table[]> {
+export interface SqliteORMOptions<T extends Table[]> {
+  name: string;
   tables: T;
   version: number;
+  dbAdapter: DatabaseAdapter.IAdapter;
+  loggerAdapter: LoggerAdapter.IAdapter;
 }
 function isPositiveInt(num: number) {
   const isDecimal = num % 1 !== 0;
@@ -24,123 +19,85 @@ function isPositiveInt(num: number) {
   }
   return num > 0;
 }
-export class SqliteWasmORM<T extends Table[]> {
-  public connection: {
-    name: string;
-    poolUtil: SAHPoolUtil;
-    db: OpfsSAHPoolDatabase;
-  } | null = null;
-  private logger: Logger = Logger.scope('ORM');
+export class SqliteORM<T extends Table[]> {
+  public logger: LoggerAdapter.IAdapter 
   public version: number;
   public tables: T;
   public upgrade: Upgrade<T>;
+  public dbAdapter: DatabaseAdapter.IAdapter;
+  public name: string;
 
-  constructor(options: SqliteWasmORMOptions<T>) {
+  constructor(options: SqliteORMOptions<T>) {
     if (isPositiveInt(options.version) === false) {
-      throw new Error('version must be an integer greater than 0');
+      throw new Error("version must be an integer greater than 0");
     }
     this.version = options.version;
     this.tables = options.tables;
+    this.dbAdapter = options.dbAdapter;
+    this.logger = options.loggerAdapter.scope("ORM");
+    this.name = options.name;
     this.upgrade = new Upgrade(this);
   }
 
-  async connect(name: string) {
-    this.logger.info('Connecting to database:', name).print();
-    const sqlite3 = await initSqlite3();
-    const poolUtil = await sqlite3.installOpfsSAHPoolVfs({});
-    const { OpfsSAHPoolDb } = poolUtil;
-
+  async connect() {
     try {
-      // pollUtil 为可用于执行文件池的基本管理的实用程序对象
-      const db = new OpfsSAHPoolDb(name);
-      const connection = {
-        poolUtil,
-        db,
-        name,
-      };
-      this.connection = connection;
-      const isOpen = db.isOpen();
-      if (isOpen) {
-        this.logger.info('Database connection established').print();
-        const upgradeRes = this.upgrade.init();
-        if (upgradeRes === false) {
-          throw new Error('Database upgrade failed');
-        }
-        return true;
-      }
-      return false;
+      await this.dbAdapter.connect(this.name);
+      await this.upgrade.init();
+      return true;
     } catch (error) {
-      if (this.connection?.db) {
-        this.connection.db.close();
-      }
-      this.logger.error('Failed to install OPFS VFS:', error).print();
+      await this.dbAdapter.disconnect();
+      this.logger.error("Failed to install OPFS VFS:", error);
       return false;
     }
   }
 
-  findTable<N extends T[number]['name']>(
-    name: N,
-  ): Extract<T[number], { name: N }> {
-    const table = this.tables.find((table) => table.name === name) as Extract<
-      T[number],
-      { name: N }
-    >;
+  findTable<N extends T[number]["name"]>(name: N): Extract<T[number], { name: N }> {
+    const table = this.tables.find((table) => table.name === name) as Extract<T[number], { name: N }>;
     if (!table) {
       throw new Error(`Table ${name} not found`);
     }
     return table;
   }
 
-  getRepository<N extends T[number]['name']>(name: N) {
+  getRepository<N extends T[number]["name"]>(name: N) {
     const table = this.findTable(name);
     return Repository.create(table, this as any);
   }
 
-  /**
-   * 获取原始数据库对象
-   */
-  get dbOriginal() {
-    if (this.connection) {
-      return this.connection.db;
-    } else {
-      throw new Error('No connection');
-    }
-  }
+  dispose = async () => {
+    Repository.insMap.clear()
+    await this.dbAdapter.disconnect();
+  };
 
-  exec<R>(sql: string, options?: ExecBaseOptions & ExecReturnThisOptions) {
+  async exec<R>(sql: string, params: any[]) {
     try {
       const startTime = performance.now();
-      const result = this.dbOriginal.exec(sql, {
-        rowMode: 'object',
-        ...options,
-      });
+      const result = await this.dbAdapter.execute(sql, params);
       this.logger
-        .info('Exec:\n', {
+        .info("Exec:\n", {
           sql,
-          bind: options?.bind,
+          bind: params,
           result,
           time: performance.now() - startTime,
         })
-        .print();
       return result as R;
     } catch (error) {
-      this.logger.error(`Exec :${sql}`, error).print();
+      this.logger.error(`Exec :${sql}`, error);
       throw error;
     }
   }
 
-  callRepo<N extends T[number]['name']>(name: N) {
+  callRepo<N extends T[number]["name"]>(name: N) {
     return this.getRepository(name);
   }
 
   /**
    * @param name 这里传递的`name`只是为了便捷的锁定表的类型，并不具备约束queryBuilder中表名的作用
    */
-  getQueryBuilder<N extends T[number]['name']>(name: N) {
+  getQueryBuilder<N extends T[number]["name"]>(name: N) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const table = this.findTable(name);
-    const queryBuilder = new QueryBuilder<
-      ColumnInfer<(typeof table)['columns']>
-    >();
+    const queryBuilder = new QueryBuilder<ColumnInfer<(typeof table)["columns"]>>();
     return queryBuilder;
   }
 }

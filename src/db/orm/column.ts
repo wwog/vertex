@@ -1,18 +1,18 @@
 export enum AllowedSqlType {
-  TEXT = 'TEXT',
-  INTEGER = 'INTEGER',
-  BOOLEAN = 'BOOLEAN', // 布尔值
-  DATETIME = 'DATETIME',
+  TEXT = "TEXT",
+  INTEGER = "INTEGER",
+  BOOLEAN = "BOOLEAN", // 布尔值
+  DATETIME = "DATETIME",
 }
 
 /** 被包装的key */
-const WrappedKey = '_column';
+const WrappedKey = "_column";
 
 /** 获取被包装的Column类 */
 function unwrapColumn<T>(column: ColumnType<T>): ColumnType<T> {
-  //@ts-ignore
+  //@ts-expect-error - WrappedKey is a private key
   if (column[WrappedKey] !== undefined) {
-    //@ts-ignore
+    //@ts-expect-error - WrappedKey is a private key
     return unwrapColumn(column[WrappedKey]);
   }
   return column;
@@ -49,11 +49,9 @@ export abstract class ColumnType<Type = any> implements ColumnParams {
     const res: any = {};
     const column = unwrapColumn(this);
     Object.keys(column).forEach((key) => {
-      if (key.startsWith('_')) {
-        //@ts-expect-error ignore
-        if (column[key] !== undefined) {
-          //@ts-expect-error
-          res[key] = column[key];
+      if (key.startsWith("_")) {
+        if (column[key as keyof ColumnType<Type>] !== undefined) {
+          res[key] = column[key as keyof ColumnType<Type>];
         }
       }
     });
@@ -70,8 +68,7 @@ export abstract class ColumnType<Type = any> implements ColumnParams {
   }
 
   primary() {
-    this._primary = true;
-    return this;
+    return new ColumnPrimary(this);
   }
 
   optional() {
@@ -83,21 +80,21 @@ export abstract class ColumnType<Type = any> implements ColumnParams {
    * @returns
    */
   genCreateSql(): string[] {
-    let sql: string[] = [];
+    const sql: string[] = [];
     if (this._autoIncrement && !this._primary) {
-      throw new Error('AUTOINCREMENT can only be applied to a primary key');
+      throw new Error("AUTOINCREMENT can only be applied to a primary key");
     }
     if (this.__sqlType) {
       sql.push(this.__sqlType);
     }
     if (this._primary) {
-      sql.push('PRIMARY KEY');
+      sql.push("PRIMARY KEY");
     }
     if (this._autoIncrement) {
-      sql.push('AUTOINCREMENT');
+      sql.push("AUTOINCREMENT");
     }
     if (this._required && !this._primary) {
-      sql.push('NOT NULL');
+      sql.push("NOT NULL");
     }
     if (this._default !== undefined) {
       sql.push(`DEFAULT ${this._default}`);
@@ -109,42 +106,70 @@ export abstract class ColumnType<Type = any> implements ColumnParams {
     const messages = [];
     if (this._required) {
       if (value === undefined || value === null) {
-        messages.push('value is required');
+        messages.push("value is required");
       }
     }
     if (this._enums && !this._enums.includes(value)) {
-      messages.push(`value must be one of ${this._enums.join(', ')}`);
+      messages.push(`value must be one of ${this._enums.join(", ")}`);
     }
     return messages;
   }
 }
 
-export class ColumnOptional<Column extends ColumnType> extends ColumnType<
-  Column['__type'] | undefined
-> {
+export class ColumnOptional<Column extends ColumnType> extends ColumnType<Column["__type"] | undefined> {
   constructor(column: Column) {
     super();
     column._required = false;
-    //@ts-ignore
+    //@ts-expect-error - WrappedKey is a private key
     this[WrappedKey] = column;
   }
 
   private get wrappedColumn() {
-    //@ts-ignore
+    //@ts-expect-error - WrappedKey is a private key
     return this[WrappedKey];
   }
 
-  unwrap() {
+  override unwrap() {
     return this.wrappedColumn;
   }
 
-  verify(value: any) {
+  override verify(value: any) {
     return this.wrappedColumn.verify(value);
   }
 }
 
+export class ColumnPrimary<Column extends ColumnType> extends ColumnType<Column["__type"]> {
+  /** 类型标记，用于类型推断 */
+  readonly __isPrimary = true as const;
+
+  constructor(column: Column) {
+    super();
+    column._primary = true;
+    //@ts-expect-error - WrappedKey is a private key
+    this[WrappedKey] = column;
+  }
+
+  private get wrappedColumn() {
+    //@ts-expect-error - WrappedKey is a private key
+    return this[WrappedKey];
+  }
+
+  override unwrap() {
+    return this.wrappedColumn;
+  }
+
+  override verify(value: any) {
+    return this.wrappedColumn.verify(value);
+  }
+
+  override autoIncrement() {
+    this.wrappedColumn.autoIncrement();
+    return this;
+  }
+}
+
 class ColumnText extends ColumnType<string> {
-  __sqlType = AllowedSqlType.TEXT;
+  override __sqlType = AllowedSqlType.TEXT;
 
   enum(enums: string[]) {
     this._enums = enums;
@@ -166,10 +191,10 @@ class ColumnText extends ColumnType<string> {
     return new ColumnOptional(this);
   }
 
-  verify(value: any) {
+  override verify(value: any) {
     const messages = [...super.verify(value)];
-    if (typeof value !== 'string' && value !== undefined && value !== null) {
-      messages.push('value must be string');
+    if (typeof value !== "string" && value !== undefined && value !== null) {
+      messages.push("value must be string");
     }
     if (this._max && value.length > this._max) {
       messages.push(`value length must less than ${this._max}`);
@@ -182,7 +207,7 @@ class ColumnText extends ColumnType<string> {
 }
 
 export class ColumnInteger extends ColumnType<number> {
-  __sqlType = AllowedSqlType.INTEGER;
+  override __sqlType = AllowedSqlType.INTEGER;
 
   enum(enums: number[]) {
     this._enums = enums;
@@ -201,16 +226,16 @@ export class ColumnInteger extends ColumnType<number> {
 
   default(value: number) {
     if (isNaN(value)) {
-      throw new Error('value must be number');
+      throw new Error("value must be number");
     }
     this._default = value.toString();
     return new ColumnOptional(this);
   }
 
-  verify(value: any) {
+  override verify(value: any) {
     const messages = [...super.verify(value)];
-    if (typeof value !== 'number' && value !== undefined && value !== null) {
-      messages.push('value must be number');
+    if (typeof value !== "number" && value !== undefined && value !== null) {
+      messages.push("value must be number");
     }
     if (this._max && value > this._max) {
       messages.push(`value must less than ${this._max}`);
@@ -223,35 +248,33 @@ export class ColumnInteger extends ColumnType<number> {
 }
 
 class ColumnBoolean extends ColumnType<boolean> {
-  __sqlType = AllowedSqlType.BOOLEAN;
-  _default: string | undefined = undefined;
+  override __sqlType = AllowedSqlType.BOOLEAN;
+  override _default: string | undefined = undefined;
 
   default(value: boolean) {
-    this._default = value ? 'TRUE' : 'FALSE';
+    this._default = value ? "TRUE" : "FALSE";
     return new ColumnOptional(this);
   }
 
-  verify(value: any) {
+  override verify(value: any) {
     const messages = [...super.verify(value)];
-    if (
-      !(typeof value === 'boolean' || [0, 1, undefined, null].includes(value))
-    ) {
-      messages.push('value must be boolean or 0/1 undefined/null');
+    if (!(typeof value === "boolean" || [0, 1, undefined, null].includes(value))) {
+      messages.push("value must be boolean or 0/1 undefined/null");
     }
     return messages;
   }
 }
 
 export class ColumnDate extends ColumnType<Date> {
-  __sqlType = AllowedSqlType.DATETIME;
+  override __sqlType = AllowedSqlType.DATETIME;
   now() {
-    this._default = 'current_timestamp';
+    this._default = "current_timestamp";
     return new ColumnOptional(this);
   }
-  verify(value: any): string[] {
+  override verify(value: any): string[] {
     const messages = [...super.verify(value)];
     if (!(value instanceof Date) && value !== undefined && value !== null) {
-      messages.push('value must be Date');
+      messages.push("value must be Date");
     }
     return messages;
   }
